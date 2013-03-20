@@ -12,6 +12,7 @@ In RF12.cpp
 
 Add new pin definitions for OSWIN:
 
+```
 #elif defined(__AVR_ATmega1284P__)
 
   #define RFM_IRQ     6     // The PIN the IRQ is on
@@ -24,19 +25,23 @@ Add new pin definitions for OSWIN:
   #define SPI_MOSI    11    // PB5, pin 6
   #define SPI_MISO    12    // PB6, pin 7
   #define SPI_SCK     13    // PB7, pin 8
+```
 
 
 AND CHANGE:
 
+```
   #else
       if ((nodeid & NODE_ID) != 0)
           attachInterrupt(0, rf12_interrupt, LOW);
       else
           detachInterrupt(0);
   #endif
+```
 
 TO:
 
+```
   #else
       #if RFM_IRQ_NO  // If IRQ number is defined use that, if not use IRQ0
       if ((nodeid & NODE_ID) != 0)
@@ -50,3 +55,4 @@ TO:
           detachInterrupt(0);
       #endif
   #endif
+```
