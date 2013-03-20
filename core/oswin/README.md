@@ -21,11 +21,9 @@ OSWIN's Blue LED is on PB3 (Arduino D7) and flashes on code upload.
 * Cannot be burned using [USBtinyISP](http://www.ladyada.net/make/usbtinyisp/).  That programmer cannot flash to chips with >64k flash size.
 * ArduinoISP has been used successfully to burn the bootloader, either using the ICSP header or with chip installed on breadboard.
 
-## Thanks to maniacbug for providing original bootloader code:
-http://maniacbug.wordpress.com/2011/11/27/arduino-on-atmega1284p-4/
-
-## and Andrew Lindsay for 12MHz and 8MHz versions:
-http://max1284.homelabs.org.uk/
+## Thanks to
+Maniacbug for providing original bootloader code: http://maniacbug.wordpress.com/2011/11/27/arduino-on-atmega1284p-4/
+and Andrew Lindsay for 12MHz and 8MHz versions: http://max1284.homelabs.org.uk/
 
 ## OSWIN is using the Bobuino pinout for ATMEGA1284P:
 
