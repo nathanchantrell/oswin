@@ -29,6 +29,7 @@ http://max1284.homelabs.org.uk/
 
 ## OSWIN is using the Bobuino pinout for ATMEGA1284P:
 
+```
                        +---\/---+
            (D 4) PB0 1 |        | 40 PA0 (D 21) AI 7
            (D 5) PB1 2 |        | 39 PA1 (D 20) AI 6
@@ -51,5 +52,5 @@ http://max1284.homelabs.org.uk/
       PWM (D 8) PD5 19 |        | 22 PC0 (D 22) SCL
       PWM (D 9) PD6 20 |        | 21 PD7 (D 31) PWM
                        +--------+
-
+```
 
