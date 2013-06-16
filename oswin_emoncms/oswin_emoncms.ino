@@ -2,37 +2,46 @@
 // OSWIN Multiple TX to emoncms
 // For the OSWIN Internet Gateway using WIZ820io ethernet http://zorg.org/oswin/
 // Receives data from multiple TinyTX sensors and/or emonTX and uploads to an emoncms server.
-// Gets NTP time once an hour and transmits for GLCD displays
-// See README for required modifications to Jeelib library.
+// Supports RFM12B or Ciseco XRF or other Xbee type radios
+// With RFM12B optionally gets NTP time once an hour and transmits for receipt by remote displays
+// ACKs are supported with RFM12B only at this time
+// If using RFM12B see README for required modifications to Jeelib library for use with ATmega1284P
+//
 // By Nathan Chantrell. http://zorg.org/
-// Licenced under GNU GPL V3
-// Based on emonbase multiple emontx example for ethershield by Trystan Lea and Glyn Hudson at OpenEnergyMonitor.org
+// Licenced under the Creative Commons Attribution-ShareAlike 3.0 Unported (CC BY-SA 3.0) licence:
+// http://creativecommons.org/licenses/by-sa/3.0/
 //------------------------------------------------------------------------------------------------------------------
 
+// Options
 #define DEBUG                // uncomment for serial output (57600 baud)
-
-// Comment out include for pins_arduino.h in SPI.cpp
-// as per https://github.com/arduino/Arduino/issues/1266
+//#define USE_RFM12B           // comment out to disable RFM12B use
+#define USE_XRF              // comment out to disable XRF/Xbee use
+#define USE_NTP              // Comment out to disable NTP transmit function (only with RFM12B)
 
 #include <SPI.h>             
-#include <JeeLib.h>          // https://github.com/jcw/jeelib
+#include <avr/wdt.h>
 #include <Ethernet52.h>      // https://bitbucket.org/homehack/ethernet52/src
 #include <EthernetUdp.h>
-#include <avr/wdt.h>
+#ifdef USE_RFM12B
+ #include <JeeLib.h>         // https://github.com/jcw/jeelib Only required for RFM12B use
+#endif
+#ifdef USE_XRF
+ #include <EasyTransfer.h>   // https://github.com/madsci1016/Arduino-EasyTransfer/tree/master/EasyTransfer
+#endif 
  
-// Fixed RF12 settings
+// RFM12B settings
 #define MYNODE 30            // node ID 30 reserved for base station
 #define freq RF12_433MHZ     // frequency
 #define group 210            // network group 
 
 // emoncms settings, change these settings to match your own setup
-IPAddress server(192,168,0,21);                      // IP address of emoncms server
-#define HOSTNAME "server.local"                 // Hostname of emoncms server
-#define EMONCMS "emoncms"                            // location of emoncms on server, blank if at root
+IPAddress server(192,168,0,21);              // IP address of emoncms server
+#define HOSTNAME "server.local"              // Hostname of emoncms server
+#define EMONCMS "emoncms"                    // location of emoncms on server, blank if at root
 #define APIKEY  "xxxxxxxxxxxxxxxxxxxxxxxx"   // API write key 
 
-// NTP Stuff
-#define USE_NTP                           // Comment out to disable NTP transmit function
+// NTP Stuff *Currently only supported with RFM12B*
+// Retrieves time from NTP server and transmits for receipt by remote displays
 #define NTP_PERIOD 60                     // How often to get & transmit the time in minutes
 #define UDP_PORT 8888                     // Local port to listen for UDP packets
 #define NTP_PACKET_SIZE 48                // NTP time stamp is in the first 48 bytes of the message
@@ -46,9 +55,9 @@ unsigned long timeTX = -NTP_PERIOD*60000; // for time transmit function
 #define greenLed 30   // OSWIN Green LED on Pin 30 / PD4 / PWM capable - used to indicate everything ok
 #define blueLed 7     // OSWIN Blue LED on Pin 7 / PB3 / PWM capable - used to indicate data received
 
+#ifdef USE_RFM12B
 // The RF12 data payload received
-typedef struct
-{
+typedef struct {
   int data1;		 // received data 1
   int supplyV;           // voltage
   int data2;		 // received data 2
@@ -56,11 +65,23 @@ typedef struct
 Payload rx; 
 
 // The RF12 data payload to be sent, used to send server time to GLCD display
-typedef struct
-{
+typedef struct {
   int hour, mins, sec;  // time
 } PayloadOut;
 PayloadOut ntp; 
+#endif
+
+#ifdef USE_XRF
+ EasyTransfer ET;  // Create SoftEasyTransfer object
+
+  typedef struct {
+  	  byte nodeID;	// Sensor Node ID
+   	  int temp;	// Temperature reading
+  	  int supplyV;	// Supply voltage
+ } PayloadXrf;
+
+ PayloadXrf xrfrx;
+#endif
 
 // PacketBuffer class used to generate the json string that is send via ethernet - JeeLabs
 class PacketBuffer : public Print {
@@ -96,17 +117,31 @@ void setup () {
   pinMode(greenLed, OUTPUT);               // Set red LED Pin as output
   pinMode(blueLed, OUTPUT);                // Set red LED Pin as output
   digitalWrite(redLed,HIGH);               // Turn red LED on during setup
+
+  #ifdef USE_XRF
+    Serial1.begin(9600); // Serial 1 for communication with the XRF/Xbee
+    ET.begin(details(xrfrx), &Serial1);
+  #endif
   
   #ifdef DEBUG
     Serial.begin(57600);
     Serial.println("-------------------------------------------------");
     Serial.println("OSWIN Multiple TX to emoncms");
-    Serial.print("Node: "); Serial.print(MYNODE); 
-    Serial.print(" Freq: "); 
-     if (freq == RF12_433MHZ) Serial.print("433 MHz");
-     if (freq == RF12_868MHZ) Serial.print("868 MHz");
-     if (freq == RF12_915MHZ) Serial.print("915 MHz");  
-    Serial.print(" Network group: "); Serial.println(group);
+    #ifdef USE_RFM12B
+     Serial.println("RFM12B support enabled");
+     Serial.print("Node: "); Serial.print(MYNODE); 
+     Serial.print(" Freq: "); 
+      if (freq == RF12_433MHZ) Serial.print("433 MHz");
+      if (freq == RF12_868MHZ) Serial.print("868 MHz");
+      if (freq == RF12_915MHZ) Serial.print("915 MHz");  
+     Serial.print(" Network group: "); Serial.println(group);
+     #ifdef USE_NTP
+      Serial.println("NTP time transmit enabled");
+     #endif
+    #endif
+    #ifdef USE_XRF
+     Serial.println("XRF/Xbee support enabled");
+    #endif
   #endif
  
 // Manually configure ip address if DHCP fails
@@ -128,7 +163,9 @@ void setup () {
   Serial.println("-------------------------------------------------");
   #endif
 
+  #ifdef USE_RFM12B
   rf12_initialize(MYNODE,freq,group);     // initialise the RFM12B
+  #endif
   
   #ifdef USE_NTP
   Udp.begin(UDP_PORT);                    // Start UDP for NTP client
@@ -150,18 +187,21 @@ void loop () {
   
   wdt_reset(); // Reset the watchdog timer
 
-  analogWrite(greenLed,5);            // Turn green LED on
-  
+  analogWrite(greenLed,5);            // Turn green LED on dim
+
+#ifdef USE_RFM12B
   #ifdef USE_NTP
   if ((millis()-timeTX)>(NTP_PERIOD*60000)){    // Send NTP time
     getTime();
   } 
   #endif
+#endif
 
 //--------------------------------------------------------------------  
 // On data receieved from rf12
 //--------------------------------------------------------------------
 
+#ifdef USE_RFM12B
   if (dataReady==0 && rf12_recvDone() && rf12_crc == 0 && (rf12_hdr & RF12_HDR_CTL) == 0) 
   {
 
@@ -169,7 +209,7 @@ void loop () {
    rx=*(Payload*) rf12_data;              // Get the payload
    digitalWrite(greenLed,LOW);            // Turn green LED off
    analogWrite(blueLed,100);              // Turn blue LED on to indicate data to send 
-   
+
    #ifdef DEBUG
     Serial.println();
     Serial.print("Data received from Node ");
@@ -182,7 +222,7 @@ void loop () {
      #endif
      rf12_sendStart(RF12_ACK_REPLY, 0, 0);
    }
-   
+
 // JSON creation: format: {key1:value1,key2:value2} and so on
     
    str.reset();                           // Reset json string     
@@ -210,7 +250,44 @@ void loop () {
 
   }
 
-// If no data is recieved from rf12 module the server is updated every 30s with RFfail = 1 indicator for debugging
+#endif
+
+#ifdef USE_XRF
+  if(ET.receiveData()){
+
+   digitalWrite(greenLed,LOW);            // Turn green LED off
+   analogWrite(blueLed,100);              // Turn blue LED on to indicate data to send 
+
+    #ifdef DEBUG
+     Serial.println();
+     Serial.print("Data received from Node ");
+     Serial.println(xrfrx.nodeID);
+    #endif
+   
+// JSON creation: format: {key1:value1,key2:value2} and so on
+    
+   str.reset();                           // Reset json string     
+   str.print("{rf_fail:0,");              // RF recieved so no failure
+   
+   str.print("node");  
+   str.print(xrfrx.nodeID);               // Add node ID
+   str.print("_data1:");
+   str.print(xrfrx.temp);                 // Add reading 1
+ 
+   str.print(",node");   
+   str.print(xrfrx.nodeID);               // Add node ID
+   str.print("_v:");
+   str.print(xrfrx.supplyV);              // Add tx battery voltage reading
+
+   str.print("}\0");
+
+   dataReady = 1;                         // Ok, data is ready
+   lastRF = millis();                     // reset lastRF timer
+
+ }
+#endif
+
+// If no data is recieved from any sensors within 30 seconds the server is updated with RFfail = 1 indicator for debugging
 
   if ((millis()-lastRF)>30000)
   {
@@ -225,8 +302,6 @@ void loop () {
 //--------------------------------------------------------------------
  
   if (!client.connected() && dataReady==1) {     // If not connected and data is ready: send data
-
-
 
    #ifdef DEBUG
     Serial.println("Connecting to server");
@@ -256,9 +331,9 @@ void loop () {
       Serial.println("Sent OK");
      #endif
 
-     digitalWrite(blueLed,LOW);          // Turn blue LED OFF to indicate data sent
      digitalWrite(redLed,LOW);           // Turn red LED OFF to clear any error
-     analogWrite(greenLed,100);          // Turn green LED ON to indicate all OK
+     digitalWrite(blueLed,LOW);          // Turn blue LED OFF to indicate data sent
+
      dataReady = 0;                      // reset data ready flag
 
     } 
@@ -292,6 +367,7 @@ void loop () {
 // Get NTP time, convert from unix time and send via RF
 //--------------------------------------------------------------------
 
+#ifdef USE_RFM12B
   void getTime() {
     #ifdef DEBUG  
     Serial.println();
@@ -365,4 +441,5 @@ void loop () {
     Udp.write(packetBuffer,NTP_PACKET_SIZE);
     Udp.endPacket(); 
   }
+#endif
 
