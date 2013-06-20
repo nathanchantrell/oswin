@@ -1,7 +1,8 @@
 #OSWIN Multiple TX to emoncms
 For the OSWIN Internet Gateway http://zorg.org/oswin/
 Receives data from multiple TinyTX sensors and/or emonTX and uploads to an emoncms server
-Optional feature to gets NTP time every so often and transmit for remote GLCD displays
+With support for RFM12B, Ciseco XRF, Xbee or OOK radios.
+Optional feature to gets NTP time every so often and transmit for remote GLCD displays (With RFM12B only)
 By Nathan Chantrell. http://zorg.org/
 Licenced under GNU GPL V3
 Based on emonbase multiple emontx example for ethershield by Trystan Lea and Glyn Hudson at OpenEnergyMonitor.org
@@ -56,3 +57,39 @@ TO:
       #endif
   #endif
 ```
+
+## OOK Support
+
+OOK support uses the Manchester encoding library here: https://github.com/mchr3k/arduino-libs-manchester
+
+For use at 12MHz (default OSWIN speed) you will need to edit the following section in MANCHESTER.cpp
+
+```
+  Timer 2 is used with a ATMega328.
+  http://www.atmel.com/dyn/resources/prod_documents/doc8161.pdf page 162
+  How to find the correct value: (OCRxA +1) = F_CPU / prescaler / 15625 / 4
+  */
+
+  TCCR2A = _BV(WGM21); // reset counter on match
+  #if F_CPU == 1000000UL
+    TCCR2B = _BV(CS21); // 1/8 prescaler
+    OCR2A = (32 >> speedFactor) - 1; // interrupt every 32 counts for base speed
+  #elif F_CPU == 8000000UL
+    TCCR2B = _BV(CS22); // 1/64 prescaler
+    OCR2A = (32 >> speedFactor) - 1; // interrupt every 32 counts for base speed
+// Added for 12MHz OSWIN support
+  #elif F_CPU == 12000000UL
+    TCCR2B = _BV(CS22); // 1/64 prescaler
+    OCR2A = (48 >> speedFactor) - 1; // interrupt every 48 counts for base speed
+// End addition for 12MHz OSWIN support
+  #elif F_CPU == 16000000UL
+    TCCR2B = _BV(CS22) | _BV(CS20); // 1/128 prescaler
+    OCR2A = (32 >> speedFactor) - 1; // interrupt every 32 counts for base speed
+  #else
+  #error "Manchester library only supports 8mhz, 12mhz, 16mhz on ATMega328"
+  #endif
+  TIMSK2 = _BV(OCIE2A); // Turn on interrupt
+  TCNT2 = 0; // Set counter to 0
+#endif
+```
+

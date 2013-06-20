@@ -2,7 +2,8 @@
 // OSWIN Multiple TX to emoncms
 // For the OSWIN Internet Gateway using WIZ820io ethernet http://zorg.org/oswin/
 // Receives data from multiple TinyTX sensors and/or emonTX and uploads to an emoncms server.
-// Supports RFM12B or Ciseco XRF or other Xbee type radios
+//
+// Supports RFM12B, Ciseco XRF or other Xbee type radios or OOK/ASK receiver
 // With RFM12B optionally gets NTP time once an hour and transmits for receipt by remote displays
 // ACKs are supported with RFM12B only at this time
 // If using RFM12B see README for required modifications to Jeelib library for use with ATmega1284P
@@ -16,23 +17,32 @@
 #define DEBUG                // uncomment for serial output (57600 baud)
 //#define USE_RFM12B           // comment out to disable RFM12B use
 #define USE_XRF              // comment out to disable XRF/Xbee use
+#define USE_OOK              // comment out to disable OOK receiver use
 #define USE_NTP              // Comment out to disable NTP transmit function (only with RFM12B)
 
 #include <SPI.h>             
 #include <avr/wdt.h>
-#include <Ethernet52.h>      // https://bitbucket.org/homehack/ethernet52/src
+#include <Ethernet52.h>      // https://bitbucket.org/homehack/ethernet52/src For WIZ820io ethernet
 #include <EthernetUdp.h>
 #ifdef USE_RFM12B
- #include <JeeLib.h>         // https://github.com/jcw/jeelib Only required for RFM12B use
+ #include <JeeLib.h>         // https://github.com/jcw/jeelib See README for mod to use with ATmega1284P
 #endif
 #ifdef USE_XRF
  #include <EasyTransfer.h>   // https://github.com/madsci1016/Arduino-EasyTransfer/tree/master/EasyTransfer
 #endif 
+#ifdef USE_OOK
+ #include <MANCHESTER.h>      // https://github.com/mchr3k/arduino-libs-manchester See README for mod to run at 12MHz
+#endif
  
 // RFM12B settings
 #define MYNODE 30            // node ID 30 reserved for base station
 #define freq RF12_433MHZ     // frequency
 #define group 210            // network group 
+
+// OOK Receiver settings
+#define OokRxPin 20  // Pin OOK Receivers data pin is connected to
+#define OokPower 18  // Pin OOK Receivers power pin is connected to
+#define OokGnd 21    // Pin OOK Receivers GND pin is connected to
 
 // emoncms settings, change these settings to match your own setup
 IPAddress server(192,168,0,21);              // IP address of emoncms server
@@ -45,7 +55,7 @@ IPAddress server(192,168,0,21);              // IP address of emoncms server
 #define NTP_PERIOD 60                     // How often to get & transmit the time in minutes
 #define UDP_PORT 8888                     // Local port to listen for UDP packets
 #define NTP_PACKET_SIZE 48                // NTP time stamp is in the first 48 bytes of the message
-IPAddress timeServer(192, 43, 244, 18);   // time.nist.gov NTP server
+IPAddress timeServer(216, 171, 120, 36);  // time.nist.gov NTP server
 byte packetBuffer[ NTP_PACKET_SIZE];      // Buffer to hold incoming and outgoing packets 
 EthernetUDP Udp;                          // A UDP instance to let us send and receive packets over UDP
 unsigned long timeTX = -NTP_PERIOD*60000; // for time transmit function
@@ -56,7 +66,7 @@ unsigned long timeTX = -NTP_PERIOD*60000; // for time transmit function
 #define blueLed 7     // OSWIN Blue LED on Pin 7 / PB3 / PWM capable - used to indicate data received
 
 #ifdef USE_RFM12B
-// The RF12 data payload received
+// Received payload structure for RFM12B
 typedef struct {
   int data1;		 // received data 1
   int supplyV;           // voltage
@@ -74,6 +84,7 @@ PayloadOut ntp;
 #ifdef USE_XRF
  EasyTransfer ET;  // Create SoftEasyTransfer object
 
+// Received payload structure for XRF
   typedef struct {
   	  byte nodeID;	// Sensor Node ID
    	  int temp;	// Temperature reading
@@ -81,6 +92,19 @@ PayloadOut ntp;
  } PayloadXrf;
 
  PayloadXrf xrfrx;
+#endif
+
+#ifdef USE_OOK
+// Received payload structure for OOK
+ typedef struct {
+          int nodeID;      // sensor node ID
+          int data;        // sensor value
+          int supplyV;     // tx voltage
+ } PayloadOok;
+ PayloadOok ookrx;
+
+unsigned char databuf[6];
+unsigned char* data = databuf;
 #endif
 
 // PacketBuffer class used to generate the json string that is send via ethernet - JeeLabs
@@ -113,22 +137,32 @@ PacketBuffer str;
 
 void setup () {
   
-  pinMode(redLed, OUTPUT);                 // Set red LED Pin as output
-  pinMode(greenLed, OUTPUT);               // Set red LED Pin as output
-  pinMode(blueLed, OUTPUT);                // Set red LED Pin as output
-  digitalWrite(redLed,HIGH);               // Turn red LED on during setup
+  pinMode(redLed, OUTPUT);       // Set red LED Pin as output
+  pinMode(greenLed, OUTPUT);     // Set red LED Pin as output
+  pinMode(blueLed, OUTPUT);      // Set red LED Pin as output
+  digitalWrite(redLed,HIGH);     // Turn red LED on during setup
 
   #ifdef USE_XRF
-    Serial1.begin(9600); // Serial 1 for communication with the XRF/Xbee
+    Serial1.begin(9600);         // Serial 1 for communication with the XRF/Xbee
     ET.begin(details(xrfrx), &Serial1);
+  #endif
+  
+  #ifdef USE_OOK
+     pinMode(OokGnd, OUTPUT);     // Set OOK GND Pin as output
+     pinMode(OokPower, OUTPUT);   // Set OOK Power Pin as output
+     digitalWrite(OokGnd,LOW);    // Set OOK GND Pin Low
+     digitalWrite(OokPower,HIGH); // Set OOK Power Pin High
+     MANRX_SetRxPin(OokRxPin);    // Set rx pin
+     MANRX_SetupReceive();        // Prepare interrupts
+     MANRX_BeginReceive();        // Begin receiving data
   #endif
   
   #ifdef DEBUG
     Serial.begin(57600);
     Serial.println("-------------------------------------------------");
-    Serial.println("OSWIN Multiple TX to emoncms");
+    Serial.println("OSWIN 2.0 Multiple TX to emoncms");
     #ifdef USE_RFM12B
-     Serial.println("RFM12B support enabled");
+     Serial.print("RFM12B support enabled ");
      Serial.print("Node: "); Serial.print(MYNODE); 
      Serial.print(" Freq: "); 
       if (freq == RF12_433MHZ) Serial.print("433 MHz");
@@ -141,6 +175,9 @@ void setup () {
     #endif
     #ifdef USE_XRF
      Serial.println("XRF/Xbee support enabled");
+    #endif
+    #ifdef USE_OOK
+     Serial.println("OOK support enabled");
     #endif
   #endif
  
@@ -212,7 +249,7 @@ void loop () {
 
    #ifdef DEBUG
     Serial.println();
-    Serial.print("Data received from Node ");
+    Serial.print("Data received from RFM12B Node ");
     Serial.println(nodeID);
    #endif
    
@@ -260,7 +297,7 @@ void loop () {
 
     #ifdef DEBUG
      Serial.println();
-     Serial.print("Data received from Node ");
+     Serial.print("Data received from SRF/XRF Node ");
      Serial.println(xrfrx.nodeID);
     #endif
    
@@ -284,6 +321,51 @@ void loop () {
    dataReady = 1;                         // Ok, data is ready
    lastRF = millis();                     // reset lastRF timer
 
+ }
+#endif
+
+#ifdef USE_OOK
+ if (MANRX_ReceiveComplete()) {      
+   
+    unsigned char receivedSize;
+    unsigned char* msgData;
+    MANRX_GetMessageBytes(&receivedSize, &msgData);
+    MANRX_BeginReceiveBytes(6, data);
+  
+   ookrx = *(PayloadOok*) data;
+  
+   if (ookrx.nodeID != 0) {
+     
+   digitalWrite(greenLed,LOW);            // Turn green LED off
+   analogWrite(blueLed,100);              // Turn blue LED on to indicate data to send 
+
+    #ifdef DEBUG
+     Serial.println();
+     Serial.print("Data received from OOK Node ");
+     Serial.println(ookrx.nodeID);
+    #endif    
+     
+  // JSON creation: format: {key1:value1,key2:value2} and so on
+    
+   str.reset();                           // Reset json string     
+   str.print("{rf_fail:0,");              // RF recieved so no failure
+   
+   str.print("node");  
+   str.print(ookrx.nodeID);               // Add node ID
+   str.print("_data1:");
+   str.print(ookrx.data);                 // Add reading 1
+   
+   str.print(",node");   
+   str.print(ookrx.nodeID);               // Add node ID
+   str.print("_v:");
+   str.print(ookrx.supplyV);              // Add tx battery voltage reading
+
+   str.print("}\0");
+
+   dataReady = 1;                         // Ok, data is ready
+   lastRF = millis();                     // reset lastRF timer
+   }
+   
  }
 #endif
 
@@ -324,7 +406,7 @@ void loop () {
      client.println(" HTTP/1.1");
      client.print("Host: ");
      client.println(HOSTNAME);
-     client.print("User-Agent: OSWIN 1.0");
+     client.print("User-Agent: OSWIN 2.0");
      client.println("\r\n");
  
      #ifdef DEBUG
