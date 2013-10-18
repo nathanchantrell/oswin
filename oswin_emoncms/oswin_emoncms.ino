@@ -15,9 +15,9 @@
 
 // Options
 #define DEBUG                // uncomment for serial output (57600 baud)
-//#define USE_RFM12B           // comment out to disable RFM12B use
-#define USE_XRF              // comment out to disable XRF/Xbee use
-#define USE_OOK              // comment out to disable OOK receiver use
+#define USE_RFM12B           // comment out to disable RFM12B use
+//#define USE_XRF            // comment out to disable XRF/Xbee use
+//#define USE_OOK            // comment out to disable OOK receiver use
 #define USE_NTP              // Comment out to disable NTP transmit function (only with RFM12B)
 
 #include <SPI.h>             
@@ -129,7 +129,8 @@ PacketBuffer str;
 
 // Flow control varaiables
   int dataReady=0;                         // is set to 1 when there is data ready to be sent
-  unsigned long lastRF;                    // used to check for RF recieve failures
+
+int rxnodeID; // The incoming node we pass to emoncms
 
 //--------------------------------------------------------------------
 // Setup
@@ -253,6 +254,8 @@ void loop () {
     Serial.println(nodeID);
    #endif
    
+   rxnodeID = nodeID;
+   
    if (RF12_WANTS_ACK) {                  // Send ACK if requested
      #ifdef DEBUG
       Serial.println("-> ack sent");
@@ -263,27 +266,19 @@ void loop () {
 // JSON creation: format: {key1:value1,key2:value2} and so on
     
    str.reset();                           // Reset json string     
-   str.print("{rf_fail:0,");              // RF recieved so no failure
    
-   str.print("node");  
-   str.print(nodeID);                     // Add node ID
-   str.print("_data1:");
+   str.print("data1:");
    str.print(rx.data1);                   // Add reading 1
    
-   str.print(",node");  
-   str.print(nodeID);                     // Add node ID
-   str.print("_data2:"); 
+   str.print(",data2:"); 
    str.print(rx.data2);                   // Add reading 2
    
-   str.print(",node");   
-   str.print(nodeID);                     // Add node ID
-   str.print("_v:");
+   str.print(",v:");
    str.print(rx.supplyV);                 // Add tx battery voltage reading
 
    str.print("}\0");
 
    dataReady = 1;                         // Ok, data is ready
-   lastRF = millis();                     // reset lastRF timer
 
   }
 
@@ -300,26 +295,22 @@ void loop () {
      Serial.print("Data received from SRF/XRF Node ");
      Serial.println(xrfrx.nodeID);
     #endif
+    
+   rxnodeID = xrfrx.nodeID;
    
 // JSON creation: format: {key1:value1,key2:value2} and so on
     
    str.reset();                           // Reset json string     
-   str.print("{rf_fail:0,");              // RF recieved so no failure
    
-   str.print("node");  
-   str.print(xrfrx.nodeID);               // Add node ID
-   str.print("_data1:");
+   str.print("data1:");
    str.print(xrfrx.temp);                 // Add reading 1
  
-   str.print(",node");   
-   str.print(xrfrx.nodeID);               // Add node ID
-   str.print("_v:");
+   str.print(",v:");
    str.print(xrfrx.supplyV);              // Add tx battery voltage reading
 
    str.print("}\0");
 
    dataReady = 1;                         // Ok, data is ready
-   lastRF = millis();                     // reset lastRF timer
 
  }
 #endif
@@ -344,41 +335,28 @@ void loop () {
      Serial.print("Data received from OOK Node ");
      Serial.println(ookrx.nodeID);
     #endif    
+    
+   rxnodeID = ookrx.nodeID;
      
   // JSON creation: format: {key1:value1,key2:value2} and so on
     
    str.reset();                           // Reset json string     
-   str.print("{rf_fail:0,");              // RF recieved so no failure
    
-   str.print("node");  
-   str.print(ookrx.nodeID);               // Add node ID
-   str.print("_data1:");
+   str.print("data1:");
    str.print(ookrx.data);                 // Add reading 1
    
-   str.print(",node");   
-   str.print(ookrx.nodeID);               // Add node ID
-   str.print("_v:");
+   str.print(",v:");
    str.print(ookrx.supplyV);              // Add tx battery voltage reading
 
    str.print("}\0");
 
    dataReady = 1;                         // Ok, data is ready
-   lastRF = millis();                     // reset lastRF timer
    }
    
  }
 #endif
 
-// If no data is recieved from any sensors within 30 seconds the server is updated with RFfail = 1 indicator for debugging
-
-  if ((millis()-lastRF)>30000)
-  {
-    lastRF = millis();                    // reset lastRF timer
-    str.reset();                          // reset json string
-    str.print("{rf_fail:1}\0");           // No RF received in 30 seconds so send failure 
-    dataReady = 1;                        // Ok, data is ready
-  }
-  
+ 
 //--------------------------------------------------------------------
 // Send the data
 //--------------------------------------------------------------------
@@ -402,7 +380,7 @@ void loop () {
      #endif
    
      // The HTTP GET request   
-     client.print("GET "); client.print("/"EMONCMS"/api/post.json?apikey="APIKEY"&json="); client.print(str.buf);       
+     client.print("GET "); client.print("/"EMONCMS"/api/post.json?apikey="APIKEY"&node="); client.print(rxnodeID); client.print("&json="); client.print(str.buf);       
      client.println(" HTTP/1.1");
      client.print("Host: ");
      client.println(HOSTNAME);
